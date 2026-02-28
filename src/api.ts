@@ -96,6 +96,6 @@ app.get("/devices/:imei/positions/latest", async (c) => {
 
 const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
 
-serve({ fetch: app.fetch, port: HTTP_PORT }, () => {
+serve({ fetch: app.fetch, port: HTTP_PORT, hostname: "0.0.0.0" }, () => {
   console.log(`[*] HTTP API listening on port ${HTTP_PORT}`);
 });
