@@ -1,6 +1,6 @@
 import "dotenv/config";
 import net from "node:net";
-import { upsertDevice, saveRawPacket, savePositions } from "./db.js";
+import { upsertDevice, updateDeviceStatus, saveRawPacket, savePositions } from "./db.js";
 import { parseImeiPacket, extractAvlRecordCount, parseAvlPacket, buildAck } from "./teltonika.js";
 
 const PORT = Number(process.env.PORT || 5100);
@@ -33,6 +33,7 @@ const server = net.createServer((socket) => {
         state.imeiAccepted = true;
 
         await upsertDevice(imei);
+        await updateDeviceStatus(imei, "online");
 
         socket.write(Buffer.from([0x01])); // accept
         console.log(`[✓] IMEI accepted: ${imei} (${remote})`);
@@ -65,12 +66,22 @@ const server = net.createServer((socket) => {
     }
   });
 
+  const markOffline = () => {
+    if (state.imei) {
+      updateDeviceStatus(state.imei, "offline").catch((err) =>
+        console.error(`[✗] Failed to mark offline (${state.imei}):`, err.message)
+      );
+    }
+  };
+
   socket.on("end", () => {
     console.log(`[-] Disconnected: ${state.imei ?? remote}`);
+    markOffline();
   });
 
   socket.on("error", (err) => {
     console.error(`[✗] Socket error (${state.imei ?? remote}):`, err.message);
+    markOffline();
   });
 });
 

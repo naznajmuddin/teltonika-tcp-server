@@ -23,6 +23,18 @@ export async function upsertDevice(imei: string): Promise<void> {
   if (error) throw new Error(`upsertDevice: ${error.message}`);
 }
 
+export async function updateDeviceStatus(
+  imei: string,
+  status: "online" | "offline"
+): Promise<void> {
+  const { error } = await supabase
+    .from("tracker_devices")
+    .update({ status, last_seen_at: new Date().toISOString() })
+    .eq("imei", imei);
+
+  if (error) throw new Error(`updateDeviceStatus: ${error.message}`);
+}
+
 export async function saveRawPacket(
   imei: string,
   remoteIp: string | undefined,
@@ -63,6 +75,14 @@ export async function savePositions(
     raw_packet_id: rawPacketId,
   }));
 
-  const { error } = await supabase.from("tracker_positions").insert(rows);
-  if (error) throw new Error(`savePositions: ${error.message}`);
+  const { error: posError } = await supabase.from("tracker_positions").insert(rows);
+  if (posError) throw new Error(`savePositions: ${posError.message}`);
+
+  // Mark the raw packet as successfully parsed
+  const { error: markError } = await supabase
+    .from("tracker_packets_raw")
+    .update({ parsed: true })
+    .eq("id", rawPacketId);
+
+  if (markError) throw new Error(`markParsed: ${markError.message}`);
 }
