@@ -2,6 +2,7 @@ import "dotenv/config";
 import net from "node:net";
 import { upsertDevice, updateDeviceStatus, saveRawPacket, savePositions } from "./db.js";
 import { parseImeiPacket, extractAvlRecordCount, parseAvlPacket, buildAck } from "./teltonika.js";
+import "./api.js";
 
 const PORT = Number(process.env.PORT || 5100);
 
