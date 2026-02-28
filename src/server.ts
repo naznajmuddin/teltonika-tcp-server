@@ -4,7 +4,7 @@ import { upsertDevice, updateDeviceStatus, saveRawPacket, savePositions } from "
 import { parseImeiPacket, extractAvlRecordCount, parseAvlPacket, buildAck } from "./teltonika.js";
 import "./api.js";
 
-const PORT = Number(process.env.PORT || 5100);
+const PORT = Number(process.env.TCP_PORT || 5100);
 
 type SocketState = {
   imei: string | null;
