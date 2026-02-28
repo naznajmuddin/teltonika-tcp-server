@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { AvlRecord } from "./teltonika.js";
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -40,4 +41,28 @@ export async function saveRawPacket(
 
   if (error) throw new Error(`saveRawPacket: ${error.message}`);
   return data.id as number;
+}
+
+export async function savePositions(
+  imei: string,
+  records: AvlRecord[],
+  rawPacketId: number
+): Promise<void> {
+  if (records.length === 0) return;
+
+  const rows = records.map((r) => ({
+    imei,
+    gps_time: r.timestamp.toISOString(),
+    latitude: r.latitude,
+    longitude: r.longitude,
+    speed: r.speed,
+    angle: r.angle,
+    satellites: r.satellites,
+    altitude: r.altitude,
+    priority: r.priority,
+    raw_packet_id: rawPacketId,
+  }));
+
+  const { error } = await supabase.from("tracker_positions").insert(rows);
+  if (error) throw new Error(`savePositions: ${error.message}`);
 }

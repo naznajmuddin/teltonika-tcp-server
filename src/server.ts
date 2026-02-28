@@ -1,7 +1,7 @@
 import "dotenv/config";
 import net from "node:net";
-import { upsertDevice, saveRawPacket } from "./db.js";
-import { parseImeiPacket, extractAvlRecordCount, buildAck } from "./teltonika.js";
+import { upsertDevice, saveRawPacket, savePositions } from "./db.js";
+import { parseImeiPacket, extractAvlRecordCount, parseAvlPacket, buildAck } from "./teltonika.js";
 
 const PORT = Number(process.env.PORT || 5100);
 
@@ -46,13 +46,18 @@ const server = net.createServer((socket) => {
       }
 
       const rawPacketId = await saveRawPacket(state.imei, remote, buf);
-      const recordCount = extractAvlRecordCount(buf);
-      const ack = buildAck(recordCount);
 
-      socket.write(ack);
+      // ACK uses the header count so the device gets a correct response
+      // even if parsing partially fails
+      const recordCount = extractAvlRecordCount(buf);
+      socket.write(buildAck(recordCount));
+
+      // Parse and persist positions (best-effort — raw packet is already saved)
+      const records = parseAvlPacket(buf);
+      await savePositions(state.imei, records, rawPacketId);
 
       console.log(
-        `[✓] Packet saved — IMEI: ${state.imei}, records: ${recordCount}, raw_id: ${rawPacketId}`
+        `[✓] IMEI: ${state.imei} — raw_id: ${rawPacketId}, records: ${recordCount}, positions: ${records.length}`
       );
     } catch (err) {
       console.error(`[✗] Error handling data from ${remote}:`, err);
