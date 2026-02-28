@@ -1,11 +1,16 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { supabase } from "./db.js";
 
 const app = new Hono();
 
-app.use("*", cors());
+app.use("*", async (c, next) => {
+  c.header("Access-Control-Allow-Origin", "*");
+  c.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+  c.header("Access-Control-Allow-Headers", "Content-Type");
+  if (c.req.method === "OPTIONS") return new Response(null, { status: 204 });
+  await next();
+});
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
