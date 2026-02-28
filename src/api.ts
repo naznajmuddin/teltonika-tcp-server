@@ -6,8 +6,8 @@ const app = new Hono();
 
 app.use("*", async (c, next) => {
   c.header("Access-Control-Allow-Origin", "*");
-  c.header("Access-Control-Allow-Methods", "GET, OPTIONS");
-  c.header("Access-Control-Allow-Headers", "Content-Type");
+  c.header("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS");
+  c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (c.req.method === "OPTIONS") return new Response(null, { status: 204 });
   await next();
 });
@@ -49,6 +49,23 @@ app.get("/devices/:imei", async (c) => {
   return c.json(data);
 });
 
+/**
+ * PATCH /devices/:imei
+ * Update label or other editable fields.
+ */
+app.patch("/devices/:imei", async (c) => {
+  const imei = c.req.param("imei");
+  const { label } = await c.req.json<{ label?: string }>();
+
+  const { error } = await supabase
+    .from("tracker_devices")
+    .update({ label: label ?? null })
+    .eq("imei", imei);
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ success: true });
+});
+
 // ── Positions ─────────────────────────────────────────────────────────────────
 
 /**
@@ -62,7 +79,7 @@ app.get("/devices/:imei", async (c) => {
  */
 app.get("/devices/:imei/positions", async (c) => {
   const imei = c.req.param("imei");
-  const limit = Math.min(Number(c.req.query("limit") ?? 100), 1000);
+  const limitParam = Number(c.req.query("limit") ?? 100);
   const from = c.req.query("from");
   const to = c.req.query("to");
 
@@ -70,8 +87,10 @@ app.get("/devices/:imei/positions", async (c) => {
     .from("tracker_positions")
     .select("id, gps_time, latitude, longitude, speed, angle, satellites, altitude, priority, raw_packet_id, created_at")
     .eq("imei", imei)
-    .order("gps_time", { ascending: false })
-    .limit(limit);
+    .order("gps_time", { ascending: false });
+
+  // limit=0 means no limit (returns all rows up to Supabase's max)
+  if (limitParam > 0) query = query.limit(Math.min(limitParam, 10_000));
 
   if (from) query = query.gte("gps_time", from);
   if (to) query = query.lte("gps_time", to);
