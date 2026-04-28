@@ -1,31 +1,42 @@
 /**
- * Reprocesses all tracker_packets_raw rows where parsed = false.
- * Safe to run multiple times — skips anything already marked parsed.
+ * Reprocesses tracker_packets_raw rows.
+ *
+ * Default mode: only rows where parsed = false. Safe to run repeatedly.
+ *
+ * --all: re-parse every raw row (e.g. after a parser change such as Phase 2.5
+ *        IO capture). Existing tracker_positions rows for each raw packet are
+ *        deleted before re-insert, so position counts stay consistent.
  *
  * Usage:
- *   npx tsx src/reprocess.ts
+ *   npx tsx src/reprocess.ts          # only unparsed
+ *   npx tsx src/reprocess.ts --all    # full backfill
  */
 
 import "dotenv/config";
-import { supabase, savePositions } from "./db.js";
+import { supabase, savePositions, deletePositionsForRaw } from "./db.js";
 import { parseAvlPacket } from "./teltonika.js";
 
 async function reprocess() {
-  console.log("[*] Fetching unparsed packets...");
+  const reparseAll = process.argv.includes("--all");
 
-  const { data: rows, error } = await supabase
+  console.log(`[*] Fetching ${reparseAll ? "all" : "unparsed"} packets...`);
+
+  let query = supabase
     .from("tracker_packets_raw")
     .select("id, imei, packet_hex")
-    .eq("parsed", false)
     .order("id", { ascending: true });
+
+  if (!reparseAll) query = query.eq("parsed", false);
+
+  const { data: rows, error } = await query;
 
   if (error) throw new Error(`Fetch failed: ${error.message}`);
   if (!rows || rows.length === 0) {
-    console.log("[✓] No unparsed packets found.");
+    console.log("[✓] No packets to process.");
     return;
   }
 
-  console.log(`[*] Found ${rows.length} unparsed packet(s). Processing...\n`);
+  console.log(`[*] Found ${rows.length} packet(s). Processing...\n`);
 
   let ok = 0;
   let failed = 0;
@@ -35,6 +46,7 @@ async function reprocess() {
       const buf = Buffer.from(row.packet_hex, "hex");
       const records = parseAvlPacket(buf);
 
+      if (reparseAll) await deletePositionsForRaw(row.id);
       await savePositions(row.imei, records, row.id);
 
       console.log(`[✓] raw_id ${row.id} — IMEI: ${row.imei}, positions: ${records.length}`);

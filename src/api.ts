@@ -16,6 +16,38 @@ app.use("*", async (c, next) => {
 
 app.get("/health", (c) => c.json({ status: "ok" }));
 
+// ── Fleet ─────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /fleet/latest
+ * Returns every device with its single most-recent position (or null).
+ * Used by the dashboard overview to show all vehicles on the map at once.
+ */
+app.get("/fleet/latest", async (c) => {
+  const { data: devices, error: devErr } = await supabase
+    .from("tracker_devices")
+    .select("imei, label, status, last_seen_at")
+    .order("last_seen_at", { ascending: false });
+
+  if (devErr) return c.json({ error: devErr.message }, 500);
+
+  const fleet = await Promise.all(
+    (devices ?? []).map(async (d) => {
+      const { data: pos } = await supabase
+        .from("tracker_positions")
+        .select("*")
+        .eq("imei", d.imei)
+        .order("gps_time", { ascending: false })
+        .limit(1)
+        .single();
+
+      return { ...d, position: pos ?? null };
+    })
+  );
+
+  return c.json(fleet);
+});
+
 // ── Devices ───────────────────────────────────────────────────────────────────
 
 /**
@@ -85,7 +117,7 @@ app.get("/devices/:imei/positions", async (c) => {
 
   let query = supabase
     .from("tracker_positions")
-    .select("id, gps_time, latitude, longitude, speed, angle, satellites, altitude, priority, raw_packet_id, created_at")
+    .select("*")
     .eq("imei", imei)
     .order("gps_time", { ascending: false });
 
@@ -109,7 +141,7 @@ app.get("/devices/:imei/positions/latest", async (c) => {
 
   const { data, error } = await supabase
     .from("tracker_positions")
-    .select("id, gps_time, latitude, longitude, speed, angle, satellites, altitude, priority, created_at")
+    .select("*")
     .eq("imei", imei)
     .order("gps_time", { ascending: false })
     .limit(1)
@@ -117,6 +149,88 @@ app.get("/devices/:imei/positions/latest", async (c) => {
 
   if (error) return c.json({ error: "No positions found" }, 404);
   return c.json(data);
+});
+
+// ── Sensors ───────────────────────────────────────────────────────────────────
+
+/**
+ * GET /devices/:imei/sensors/:field
+ * Time series for one IO field. `field` can be either a promoted column
+ * (e.g. `external_voltage_v`, `ignition`) or a JSONB key inside `io_data`
+ * (e.g. `ble_temp_1`, `dallas_temp_1`).
+ *
+ * Returns [{ gps_time, value }] newest-first.
+ *
+ * Query params: limit (default 500, max 10_000), from, to.
+ */
+const PROMOTED_COLUMNS = new Set([
+  "ignition", "movement", "gsm_signal", "sleep_mode", "gnss_status",
+  "gnss_pdop", "gnss_hdop", "external_voltage_v", "battery_voltage_v",
+  "battery_current_ma", "battery_level_pct", "total_odometer_m",
+  "trip_odometer_m", "dout1", "dout2", "din1", "din2", "din3", "din4",
+  "ain1", "gsm_operator", "eco_score", "green_driving_type", "over_speeding",
+  "crash_detection", "jamming", "bt_status", "event_io_id",
+]);
+
+app.get("/devices/:imei/sensors/:field", async (c) => {
+  const imei = c.req.param("imei");
+  const field = c.req.param("field");
+  const limitParam = Math.min(Math.max(Number(c.req.query("limit") ?? 500), 1), 10_000);
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+
+  const isPromoted = PROMOTED_COLUMNS.has(field);
+  const selector = isPromoted ? `gps_time, value:${field}` : `gps_time, io_data`;
+
+  let query = supabase
+    .from("tracker_positions")
+    .select(selector)
+    .eq("imei", imei)
+    .order("gps_time", { ascending: false })
+    .limit(limitParam);
+
+  if (from) query = query.gte("gps_time", from);
+  if (to)   query = query.lte("gps_time", to);
+
+  const { data, error } = await query;
+  if (error) return c.json({ error: error.message }, 500);
+
+  const series = isPromoted
+    ? (data ?? [])
+    : (data ?? [])
+        .map((row: any) => ({
+          gps_time: row.gps_time,
+          value: row.io_data?.[field] ?? null,
+        }))
+        .filter((row) => row.value !== null);
+
+  return c.json(series);
+});
+
+/**
+ * GET /devices/:imei/io-keys
+ * Distinct set of io_data JSONB keys this device has emitted across its most
+ * recent 1000 records. Used to populate a frontend sensor picker.
+ */
+app.get("/devices/:imei/io-keys", async (c) => {
+  const imei = c.req.param("imei");
+
+  const { data, error } = await supabase
+    .from("tracker_positions")
+    .select("io_data")
+    .eq("imei", imei)
+    .order("gps_time", { ascending: false })
+    .limit(1000);
+
+  if (error) return c.json({ error: error.message }, 500);
+
+  const keys = new Set<string>();
+  for (const row of data ?? []) {
+    const io = (row as { io_data: Record<string, unknown> | null }).io_data;
+    if (io) for (const k of Object.keys(io)) keys.add(k);
+  }
+
+  return c.json([...keys].sort());
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────

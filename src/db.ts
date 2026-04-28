@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { AvlRecord } from "./teltonika.js";
+import { PROMOTED_FIELDS } from "./avlDictionary.js";
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -55,6 +56,14 @@ export async function saveRawPacket(
   return data.id as number;
 }
 
+export async function deletePositionsForRaw(rawPacketId: number): Promise<void> {
+  const { error } = await supabase
+    .from("tracker_positions")
+    .delete()
+    .eq("raw_packet_id", rawPacketId);
+  if (error) throw new Error(`deletePositionsForRaw: ${error.message}`);
+}
+
 export async function savePositions(
   imei: string,
   records: AvlRecord[],
@@ -62,18 +71,28 @@ export async function savePositions(
 ): Promise<void> {
   if (records.length === 0) return;
 
-  const rows = records.map((r) => ({
-    imei,
-    gps_time: r.timestamp.toISOString(),
-    latitude: r.latitude,
-    longitude: r.longitude,
-    speed: r.speed,
-    angle: r.angle,
-    satellites: r.satellites,
-    altitude: r.altitude,
-    priority: r.priority,
-    raw_packet_id: rawPacketId,
-  }));
+  const rows = records.map((r) => {
+    const promoted: Record<string, unknown> = {};
+    for (const { key, column } of PROMOTED_FIELDS) {
+      if (key in r.ioData) promoted[column] = r.ioData[key];
+    }
+
+    return {
+      imei,
+      gps_time: r.timestamp.toISOString(),
+      latitude: r.latitude,
+      longitude: r.longitude,
+      speed: r.speed,
+      angle: r.angle,
+      satellites: r.satellites,
+      altitude: r.altitude,
+      priority: r.priority,
+      raw_packet_id: rawPacketId,
+      event_io_id: r.eventIoId,
+      io_data: r.ioData,
+      ...promoted,
+    };
+  });
 
   const { error: posError } = await supabase.from("tracker_positions").insert(rows);
   if (posError) throw new Error(`savePositions: ${posError.message}`);
